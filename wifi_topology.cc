@@ -30,7 +30,6 @@
 #include <string>
 #include <fstream>
 #include "ns3/core-module.h"
-#include "ns3/point-to-point-module.h"
 #include "ns3/internet-module.h"
 #include "ns3/applications-module.h"
 #include "ns3/network-module.h"
@@ -57,7 +56,7 @@
 
 using namespace ns3;
 using namespace std;
-NS_LOG_COMPONENT_DEFINE ("ThirdScriptExample");
+NS_LOG_COMPONENT_DEFINE ("WifiTopology");
 
 int packets_number = 1;
 Ptr<PacketSink> tcpSink;
@@ -65,29 +64,103 @@ Ptr<PacketSink> tcpSink;
 //vector<Ptr<Socket>> receiverSockets;
 
 void
-ThroughputMonitor (FlowMonitorHelper *fmhelper, Ptr<FlowMonitor> flowMon)
+ThroughputMonitor (FlowMonitorHelper *fmhelper, Ptr<FlowMonitor> flowMon, Ipv4InterfaceContainer receivers, Gnuplot2dDataset DataSet , double em)
 {
-    //double localThrou = 0;
+    double localThrou = 0;
+    uint16_t n = receivers.GetN();
+    double RxBytes = 0;
+    double FirstTxtime = 10000;
+    double LastRxtime = 0;
+    uint16_t i = 0;
+
     std::map<FlowId, FlowMonitor::FlowStats> flowStats = flowMon->GetFlowStats ();
+
     Ptr<Ipv4FlowClassifier> classing = DynamicCast<Ipv4FlowClassifier> (fmhelper->GetClassifier ());
     for (std::map<FlowId, FlowMonitor::FlowStats>::const_iterator stats = flowStats.begin (); stats != flowStats.end (); ++stats)
     {
-
         Ipv4FlowClassifier::FiveTuple fiveTuple = classing->FindFlow (stats->first);
+
         std::cout << "Flow ID			: "<< stats->first << " ; " << fiveTuple.sourceAddress << " -----> " << fiveTuple.destinationAddress << std::endl;
         std::cout << "Tx Packets = " << stats->second.txPackets << std::endl;
         std::cout << "Rx Packets = " << stats->second.rxPackets << std::endl;
         std::cout << "Duration		: "<< (stats->second.timeLastRxPacket.GetSeconds () - stats->second.timeFirstTxPacket.GetSeconds ()) << std::endl;
         std::cout << "Last Received Packet	: "<< stats->second.timeLastRxPacket.GetSeconds () << " Seconds" << std::endl;
         std::cout << "Throughput: " << stats->second.rxBytes * 8.0 / (stats->second.timeLastRxPacket.GetSeconds () - stats->second.timeFirstTxPacket.GetSeconds ()) / 1024 / 1024  << " Mbps" << std::endl;
-        //localThrou = stats->second.rxBytes * 8.0 / (stats->second.timeLastRxPacket.GetSeconds () - stats->second.timeFirstTxPacket.GetSeconds ()) / 1024 / 1024;
+        //calculate total throughput
+        for (uint16_t i = 0; i < n; ++i) {
+            if (fiveTuple.destinationAddress == receivers.GetAddress(i)) {
+                RxBytes += stats->second.rxBytes;
+                if (stats->second.timeFirstTxPacket.GetSeconds() < FirstTxtime)
+                    FirstTxtime = stats->second.timeFirstTxPacket.GetSeconds();
+                if (stats->second.timeLastRxPacket.GetSeconds() > LastRxtime)
+                    LastRxtime = stats->second.timeLastRxPacket.GetSeconds();
+                break;
+            }
+        }
+        if (i == flowStats.size() - 1){
+            localThrou = RxBytes * 8.0 / (LastRxtime - FirstTxtime) / 1024 / 1024;
+            DataSet.Add ((double )em,(double) localThrou);
+            cout << "Total throughput is " << localThrou<<endl;
+            em *= 10;
+        }
+        i++;
 
         std::cout << "---------------------------------------------------------------------------" << std::endl;
-        flowMon = fmhelper->InstallAll ();
     }
-    Simulator::Schedule (Seconds (10),&ThroughputMonitor, fmhelper, flowMon);
-    flowMon->SerializeToXmlFile ("ThroughputMonitor.xml", true, true);
+
+
+    Simulator::Schedule (Seconds (10),&ThroughputMonitor, fmhelper, flowMon, receivers, DataSet, em);
+    flowMon->SerializeToXmlFile ("ThroughputVsError&Rate1Mbps.xml", true, true);
 }
+
+void
+AverageDelayMonitor (FlowMonitorHelper *fmhelper, Ptr<FlowMonitor> flowMon,Ipv4InterfaceContainer receivers, Ipv4InterfaceContainer senders, Gnuplot2dDataset DataSet , double em)
+{
+    double localDelay = 0;
+    uint16_t n = receivers.GetN();
+    double RxPackets = 0;
+    double delay = 0;
+    uint16_t i = 0;
+
+    std::map<FlowId, FlowMonitor::FlowStats> flowStats = flowMon->GetFlowStats ();
+    Ptr<Ipv4FlowClassifier> classing = DynamicCast<Ipv4FlowClassifier> (fmhelper->GetClassifier ());
+    for (std::map<FlowId, FlowMonitor::FlowStats>::const_iterator stats = flowStats.begin (); stats != flowStats.end (); ++stats)
+    {
+        Ipv4FlowClassifier::FiveTuple fiveTuple = classing->FindFlow (stats->first);
+        std::cout << "Flow ID			: "<< stats->first << " ; " << fiveTuple.sourceAddress << " -----> " << fiveTuple.destinationAddress << std::endl;
+        std::cout << "Tx Packets = " << stats->second.txPackets << std::endl;
+        std::cout << "Rx Packets = " << stats->second.rxPackets << std::endl;
+        std::cout << "Duration		: "<< (stats->second.timeLastRxPacket.GetSeconds () - stats->second.timeFirstTxPacket.GetSeconds ()) << std::endl;
+        std::cout << "Last Received Packet	: "<< stats->second.timeLastRxPacket.GetSeconds () << " Seconds" << std::endl;
+        std::cout << "Sum of e2e Delay: " << stats->second.delaySum.GetSeconds () << " s" << std::endl;
+        std::cout << "Average of e2e Delay: " << stats->second.delaySum.GetSeconds () / stats->second.rxPackets << " s" << std::endl;
+        //calculate total average delay
+        for (uint16_t i = 0; i < n; ++i) {
+            if (fiveTuple.destinationAddress == receivers.GetAddress(i)) {
+                RxPackets += stats->second.rxPackets;
+                delay += stats->second.delaySum.GetSeconds();
+                break;
+            }
+            if(fiveTuple.sourceAddress == senders.GetAddress(i)){
+                delay += stats->second.delaySum.GetSeconds();
+                break;
+            }
+        }
+
+        if (i == flowStats.size() - 1){
+            localDelay = delay/RxPackets;
+            DataSet.Add ((double )em,(double) localDelay);
+            cout << "Total averagedelay is " << localDelay<<endl;
+            em *= 10;
+        }
+        i++;
+        std::cout << "---------------------------------------------------------------------------" << std::endl;
+    }
+    Simulator::Schedule (Seconds (10),&AverageDelayMonitor, fmhelper, flowMon,receivers, senders, DataSet, em);
+    flowMon->SerializeToXmlFile ("ErrorVSAverageDelayMonitor.xml", true, true);
+}
+
+
 
 class lb : public Application
 {
@@ -109,23 +182,17 @@ private:
 };
 
 
-void
-pnum(Ptr<PacketSink> udpSink){
-    std::cout << "test packet is -----> " << udpSink->GetTotalRx()<<std::endl;
-    packets_number = udpSink->GetTotalRx()/512;
-}
-
-
 
 int
 main (int argc, char *argv[])
 {
 
-
+    double error = 0.000001;
     uint32_t maxBytes = 0;
+    string bandwidth = "1Mbps";
     bool verbose = true;
-    uint32_t nWifi = 2;
-    double duration = 10.0;
+    int nWifi = 2;
+    double duration = 60.0;
     bool tracing = false;
 
     //generate random number
@@ -165,6 +232,9 @@ main (int argc, char *argv[])
     wifiApNode.Create(1);
 
     YansWifiChannelHelper channel = YansWifiChannelHelper::Default ();
+
+//    channel.AddPropagationLoss ("ns3::FriisPropagationLossModel");
+
     YansWifiPhyHelper phy;
     phy.SetChannel (channel.Create ());
 
@@ -180,19 +250,32 @@ main (int argc, char *argv[])
     NetDeviceContainer staDevicesLeft;
     staDevicesLeft = wifi.Install (phy, mac, wifiStaNodesLeft);
 
-    mac.SetType ("ns3::StaWifiMac",
-                 "Ssid", SsidValue (ssid),
-                 "ActiveProbing", BooleanValue (false));
-
-    NetDeviceContainer staDevicesRight;
-    staDevicesRight = wifi.Install (phy, mac, wifiStaNodesRight);
-
-
     mac.SetType ("ns3::ApWifiMac",
                  "Ssid", SsidValue (ssid));
 
     NetDeviceContainer apDevices;
     apDevices = wifi.Install (phy, mac, wifiApNode);
+
+    mac.SetType ("ns3::StaWifiMac",
+                 "Ssid", SsidValue (ssid),
+                 "ActiveProbing", BooleanValue (false));
+    Ptr<RateErrorModel> em = CreateObject<RateErrorModel> ();
+    em->SetAttribute ("ErrorRate", DoubleValue (error));
+//    phy.SetErrorRateModel("ns3::RateErrorModel", PointerValue(em));
+    phy.SetErrorRateModel("ns3::YansErrorRateModel");
+
+    NetDeviceContainer staDevicesRight;
+    staDevicesRight = wifi.Install (phy, mac, wifiStaNodesRight);
+
+//    // Create error model on receiver.
+//    Ptr<RateErrorModel> em = CreateObject<RateErrorModel> ();
+//    em->SetAttribute ("ErrorRate", DoubleValue (error));
+//    for (int i = 0; i < nWifi; ++i) {
+//        staDevicesRight.Get(i)->SetAttribute("ReceiveErrorModel", PointerValue (em));
+//    }
+
+
+
 
     MobilityHelper mobility;
 
@@ -238,11 +321,13 @@ main (int argc, char *argv[])
     OnOffHelper source ("ns3::UdpSocketFactory",InetSocketAddress (apNodeInterface.GetAddress(0), port));
 
     // Set the amount of data to send in bytes. Zero is unlimited.
+    DataRate x(bandwidth);
+    source.SetAttribute("DataRate", DataRateValue(x));
     source.SetAttribute ("MaxBytes", UintegerValue (maxBytes));
     ApplicationContainer apps = source.Install (wifiStaNodesLeft.Get (0));
 
     apps.Start (Seconds (0.0));
-    apps.Stop (Seconds (5.0));
+    apps.Stop (Seconds (duration));
 
     // Create a PacketSinkApplication and install it on node 1.
 //    PacketSinkHelper sink ("ns3::UdpSocketFactory",
@@ -256,62 +341,96 @@ main (int argc, char *argv[])
     Ptr<lb> lbApp = CreateObject<lb> (port, staNodesRightInterface);
     wifiApNode.Get (0)->AddApplication (lbApp);
     lbApp->SetStartTime (Seconds (0.0));
-    lbApp->SetStopTime (Seconds (10.0));
+    lbApp->SetStopTime (Seconds (duration));
 
 
     // Receivers
     PacketSinkHelper sink ("ns3::TcpSocketFactory",
                            InetSocketAddress (Ipv4Address::GetAny (), port));
     ApplicationContainer sinkApps = sink.Install (wifiStaNodesRight);
-    sinkApps.Start (Seconds (5.0));
-    sinkApps.Stop (Seconds (10.0));
+    sinkApps.Start (Seconds (0.0));
+    sinkApps.Stop (Seconds (duration));
 
 
 
 
     NS_LOG_INFO ("Run Simulation");
 
-//    std::string fileNameWithNoExtension = "FlowVSThroughput_";
-//    std::string mainPlotTitle = "Flow vs Throughput";
-//    std::string graphicsFileName        = fileNameWithNoExtension + ".png";
-//    std::string plotFileName            = fileNameWithNoExtension + ".plt";
-//    std::string plotTitle               = mainPlotTitle + ", Error: " + std::to_string(error);
-//    std::string dataTitle               = "Throughput";
-//
-//    // Instantiate the plot and set its title.
-//    Gnuplot gnuplot (graphicsFileName);
-//    gnuplot.SetTitle (plotTitle);
-//
-//    // Make the graphics file, which the plot file will be when it
-//    // is used with Gnuplot, be a PNG file.
-//    gnuplot.SetTerminal ("png");
-//
-//    // Set the labels for each axis.
-//    gnuplot.SetLegend ("Flow", "Throughput");
+    std::string fileNameWithNoExtension = "ErrorVSThroughput_"+bandwidth;
+    std::string mainPlotTitle = "Error vs Throughput";
+    std::string graphicsFileName        = fileNameWithNoExtension + ".png";
+    std::string plotFileName            = fileNameWithNoExtension + ".plt";
+    std::string plotTitle               = mainPlotTitle + ", Bandwidth: " + bandwidth;
+    std::string dataTitle               = "Throughput";
+
+    // Instantiate the plot and set its title.
+    Gnuplot gnuplot (graphicsFileName);
+    gnuplot.SetTitle (plotTitle);
+
+    // Make the graphics file, which the plot file will be when it
+    // is used with Gnuplot, be a PNG file.
+    gnuplot.SetTerminal ("png");
+
+    // Set the labels for each axis.
+    gnuplot.SetLegend ("Error", "Throughput");
 
 
-//    Gnuplot2dDataset dataset;
-//    dataset.SetTitle (dataTitle);
-//    dataset.SetStyle (Gnuplot2dDataset::LINES_POINTS);
+    Gnuplot2dDataset dataset;
+    dataset.SetTitle (dataTitle);
+    dataset.SetStyle (Gnuplot2dDataset::LINES_POINTS);
+
+    //
+    std::string fileNameWithNoExtension2 = "ErrorVSaverageDelay_"+bandwidth;
+    std::string mainPlotTitle2 = "Error vs average delay";
+    std::string graphicsFileName2        = fileNameWithNoExtension2 + ".png";
+    std::string plotFileName2            = fileNameWithNoExtension2 + ".plt";
+    std::string plotTitle2               = mainPlotTitle2 + ", Bandwidth: " + bandwidth;
+    std::string dataTitle2               = "Average delay";
+
+    // Instantiate the plot and set its title.
+    Gnuplot gnuplot2 (graphicsFileName2);
+    gnuplot2.SetTitle (plotTitle2);
+
+    // Make the graphics file, which the plot file will be when it
+    // is used with Gnuplot, be a PNG file.
+    gnuplot2.SetTerminal ("png");
+
+    // Set the labels for each axis.
+    gnuplot2.SetLegend ("Error", "Average delay");
+
+
+    Gnuplot2dDataset dataset2;
+    dataset2.SetTitle (dataTitle2);
+    dataset2.SetStyle (Gnuplot2dDataset::LINES_POINTS);
 
     // Flow monitor.
     Ptr<FlowMonitor> flowMonitor;
     FlowMonitorHelper flowHelper;
-    flowMonitor = flowHelper.InstallAll ();
+    flowMonitor = flowHelper.InstallAll();
 
-    ThroughputMonitor (&flowHelper, flowMonitor);
+    ThroughputMonitor (&flowHelper, flowMonitor, staNodesRightInterface, dataset, error);
+    AverageDelayMonitor (&flowHelper, flowMonitor, staNodesRightInterface, staNodesLeftInterface, dataset2, error);
 
     Simulator::Stop (Seconds (duration));
     Simulator::Run ();
 
-//    //Gnuplot ...continued.
-//    gnuplot.AddDataset (dataset);
-//    // Open the plot file.
-//    std::ofstream plotFile (plotFileName.c_str ());
-//    // Write the plot file.
-//    gnuplot.GenerateOutput (plotFile);
-//    // Close the plot file.
-//    plotFile.close ();
+    //Gnuplot ...continued.
+    gnuplot.AddDataset (dataset);
+    // Open the plot file.
+    std::ofstream plotFile (plotFileName.c_str ());
+    // Write the plot file.
+    gnuplot.GenerateOutput (plotFile);
+    // Close the plot file.
+    plotFile.close ();
+
+    //Gnuplot ...continued.
+    gnuplot2.AddDataset (dataset2);
+    // Open the plot file.
+    std::ofstream plotFile2 (plotFileName2.c_str ());
+    // Write the plot file.
+    gnuplot2.GenerateOutput (plotFile2);
+    // Close the plot file.
+    plotFile2.close ();
 
 
     return 0;
@@ -361,6 +480,8 @@ void lb::HandleRead (Ptr<Socket> socket)
         {
             break;
         }
+//        packet->RemoveAllPacketTags ();
+        packet->RemoveAllByteTags ();
 
         // select a random receiver and send received message in TCP
         int receiverIndex = rand () % myReceivers.GetN ();

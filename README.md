@@ -33,3 +33,15 @@ In this project we simulated following topology:
   <img src="./result.png" alt="image" width="700px"></a>
   <br>
 </h1>
+
+### Error Vs Throughput and bandwidth: 1Mbps
+<h1 align="left">
+  <img src="./ErrorVSThroughput_1Mbps.png" alt="image" width="700px"></a>
+  <br>
+</h1>
+
+### Error Vs Average delay and bandwidth: 1Mbps
+<h1 align="left">
+  <img src="./ErrorVSaverageDelay_1Mbps.png" alt="image" width="700px"></a>
+  <br>
+</h1>
